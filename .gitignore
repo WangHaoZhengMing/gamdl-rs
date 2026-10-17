@@ -1,0 +1,11 @@
+/target/
+/cookies.txt
+*.cookies.txt
+.env
+
+/*.log
+
+*.wvd
+/Apple Music/
+
+!crates/media/assets/default.wvd

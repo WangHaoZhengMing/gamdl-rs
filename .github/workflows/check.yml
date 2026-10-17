@@ -1,0 +1,25 @@
+name: Check
+on: [push, pull_request]
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+          components: rustfmt, clippy
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: cargo fmt --all -- --check
+      - run: cargo test --locked -p apple -p media -p app -p cli
+      - run: cargo check --locked -p cli --no-default-features
+      - run: cargo clippy --locked -p apple -p media -p app -p cli --all-targets --features cli/widevine -- -D warnings
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+      - run: sudo bash scripts/install-linux-deps.sh
+      - run: cargo check --locked -p desktop --features widevine
