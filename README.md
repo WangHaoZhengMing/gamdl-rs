@@ -1,7 +1,12 @@
 # Apple Music Rust workspace
 
 轻量原生重实现，Rust 2024。GPUI Kit 桌面端与独立 CLI 共用同一套任务队列。
-
+<p align="center">
+  <img src="https://pic1.imgdb.cn/i/034htOLSKwkV7zeINHoOKb.png" width="48%" />
+  <img src="https://pic1.imgdb.cn/i/034htQmkATA2KpIZhxAGUz.png" width="48%" />
+</p>
+多语言支持
+![pasted_1792302526622_deqphr.png](https://pic1.imgdb.cn/i/034htTtXHAWAHIzwEcBrlg.png)
 目前支持歌曲、专辑和歌单 URL，专辑/歌单分页展开并按歌曲 ID 去重；优先 AAC 256kbps（`28:ctrp256`）。
 媒体层支持点播 HLS、初始化段、字节范围、AES-128 和单密钥 CENC，使用 FFmpeg 无转码封装为 M4A。
 包含标题、歌手、专辑、曲序、碟号和日期标签。默认还嵌入歌词和封面。封装后完整解码校验，成功才发布输出；不覆盖已有文件。
@@ -182,4 +187,4 @@ cargo clippy --locked -p apple -p media -p app -p cli --all-targets --features c
 
 ## FFmpeg 分发评估
 
-目前仍需要可用 FFmpeg，尚未将其打包。建议下一阶段采用「应用发行包附带精简 FFmpeg」；链接 FFmpeg 库并不会让 FFmpeg 本体或分发成本消失。
+目前仍需要可用 FFmpeg，尚未将其打包。虽然有纯 rust 替代方案但是后续的高级功能拓展仍要依赖 ffmpeg 。
