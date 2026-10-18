@@ -16,6 +16,7 @@ thiserror.workspace = true
 tokio.workspace = true
 toml = "0.9"
 reqwest.workspace = true
+dirs = "6"
 
 [features]
 widevine = ["media/widevine"]

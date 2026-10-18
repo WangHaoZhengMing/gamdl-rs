@@ -33,6 +33,14 @@ enum Command {
         jobs: Option<u8>,
         #[arg(long)]
         wvd: Option<PathBuf>,
+        /// Also save artwork beside the M4A file.
+        #[arg(long)]
+        save_cover: bool,
+        /// Also save lyrics beside the M4A file.
+        #[arg(long)]
+        save_lyrics: bool,
+        #[arg(long, value_parser = ["lrc", "ttml"])]
+        lyrics_format: Option<String>,
     },
 }
 
@@ -52,6 +60,9 @@ async fn main() -> Result<()> {
         output,
         jobs,
         wvd,
+        save_cover,
+        save_lyrics,
+        lyrics_format,
     } = &args.command
     {
         if let Some(output) = output {
@@ -62,6 +73,15 @@ async fn main() -> Result<()> {
         }
         if let Some(wvd) = wvd {
             config.wvd_path = Some(wvd.clone());
+        }
+        config.save_cover |= *save_cover;
+        config.save_lyrics |= *save_lyrics;
+        if let Some(format) = lyrics_format {
+            config.lyrics_format = if format == "ttml" {
+                app::LyricsFormat::Ttml
+            } else {
+                app::LyricsFormat::Lrc
+            };
         }
         let cancel = app::CancellationToken::new();
         let signal_cancel = cancel.clone();

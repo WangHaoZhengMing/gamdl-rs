@@ -14,6 +14,7 @@ pub enum State {
     Pending,
     Resolving,
     Downloading,
+    Enriching,
     Decrypting,
     Muxing,
     Verifying,
@@ -26,6 +27,7 @@ pub enum State {
 pub struct QueueItem {
     pub id: usize,
     pub track_id: String,
+    pub url: String,
     pub title: String,
     pub artist: String,
 }
@@ -40,6 +42,15 @@ pub struct Summary {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum Event {
+    Assets {
+        id: usize,
+        lyrics: Option<String>,
+        cover: bool,
+    },
+    Warning {
+        id: usize,
+        message: String,
+    },
     Planning,
     Queued {
         items: Vec<QueueItem>,
@@ -69,6 +80,16 @@ pub async fn download(
     events: mpsc::Sender<Event>,
     cancel: CancellationToken,
 ) -> Result<Summary, Error> {
+    download_with_credentials(config, urls, events, cancel, crate::Credentials::CookieFile).await
+}
+
+pub async fn download_with_credentials(
+    config: Config,
+    urls: Vec<String>,
+    events: mpsc::Sender<Event>,
+    cancel: CancellationToken,
+    credentials: crate::Credentials,
+) -> Result<Summary, Error> {
     if !(1..=16).contains(&config.jobs) {
         return Err(Error::InvalidJobs);
     }
@@ -83,23 +104,30 @@ pub async fn download(
     emit(&events, Event::Planning).await;
     let planning = async {
         crate::check_ffmpeg(&config).await?;
-        let cookies = tokio::fs::read_to_string(&config.cookies_path).await?;
-        let (session, account) = apple::check_session(&cookies).await?;
+        let (session, account) = crate::session(&config, &credentials).await?;
         if !account.active_subscription {
             return Err(Error::SubscriptionRequired);
         }
         let mut tracks = Vec::new();
         let mut seen = HashSet::new();
+        let mut sources = std::collections::HashMap::new();
         for resource in resources {
             for track in apple::tracks(&session, &resource, &config.language).await? {
                 if seen.insert(track.id.clone()) {
+                    sources.insert(
+                        track.id.clone(),
+                        format!(
+                            "https://music.apple.com/{}/song/{}",
+                            resource.storefront, track.id
+                        ),
+                    );
                     tracks.push(track);
                 }
             }
         }
-        Ok::<_, Error>((session, tracks))
+        Ok::<_, Error>((session, tracks, sources))
     };
-    let (session, tracks) = tokio::select! {biased; _=cancel.cancelled()=>return Err(media::Error::Cancelled.into()),result=planning=>result?};
+    let (session, tracks, sources) = tokio::select! {biased; _=cancel.cancelled()=>return Err(media::Error::Cancelled.into()),result=planning=>result?};
     if tracks.is_empty() {
         return Err(Error::EmptyQueue);
     }
@@ -109,6 +137,7 @@ pub async fn download(
         .map(|(id, track)| QueueItem {
             id,
             track_id: track.id.clone(),
+            url: sources[&track.id].clone(),
             title: track.title.clone(),
             artist: track.artist.clone(),
         })
@@ -322,6 +351,31 @@ async fn download_one(
         events,
         Event::State {
             id,
+            state: State::Enriching,
+        },
+    )
+    .await;
+    let (extras, warnings) =
+        crate::enrichment::fetch(config, session, client, track, cancel).await?;
+    for message in warnings {
+        emit(events, Event::Warning { id, message }).await;
+    }
+    emit(
+        events,
+        Event::Assets {
+            id,
+            lyrics: extras
+                .lyrics
+                .as_ref()
+                .map(|lyrics| lyrics.kind.label().into()),
+            cover: extras.cover.is_some(),
+        },
+    )
+    .await;
+    emit(
+        events,
+        Event::State {
+            id,
             state: State::Downloading,
         },
     )
@@ -333,12 +387,18 @@ async fn download_one(
         track: track.track_number,
         disc: track.disc_number,
         date: track.release_date.clone(),
+        apple_music_id: Some(track.id.clone()),
+        apple_music_url: Some(format!(
+            "https://music.apple.com/{}/song/{}",
+            track.storefront, track.id
+        )),
     };
     let options = media::SaveOptions {
         output: &output,
         ffmpeg: &config.ffmpeg_path,
         tags: &tags,
         key: key.as_ref(),
+        extras: Some(&extras),
     };
     // High-frequency updates are lossy; terminal events are reliable.
     Ok(media::save(client, &plan, options, cancel, |progress| {

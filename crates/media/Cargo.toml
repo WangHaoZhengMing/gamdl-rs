@@ -22,6 +22,8 @@ aes = "0.8"
 cbc = { version = "0.1", features = ["alloc"] }
 tempfile = "3"
 zeroize = "1"
+roxmltree = "0.20"
+mp4ameta = "0.13"
 widevine = { version = "0.1", optional = true }
 
 [features]

@@ -8,4 +8,4 @@ apt-get install -y --no-install-recommends \
   libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev \
   libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev \
   libxcb-render0-dev libxcb-shm0-dev libxcb-xinput-dev libxcb-xkb-dev \
-  libvulkan-dev libssl-dev ffmpeg
+  libvulkan-dev libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev libdbus-1-dev ffmpeg

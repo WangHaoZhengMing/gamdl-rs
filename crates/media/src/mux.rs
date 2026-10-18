@@ -13,6 +13,8 @@ pub struct Tags {
     pub track: Option<u32>,
     pub disc: Option<u32>,
     pub date: Option<String>,
+    pub apple_music_id: Option<String>,
+    pub apple_music_url: Option<String>,
 }
 #[derive(Debug, PartialEq, Eq)]
 pub enum Output {
@@ -39,6 +41,7 @@ pub struct SaveOptions<'a> {
     pub ffmpeg: &'a Path,
     pub tags: &'a Tags,
     pub key: Option<&'a ContentKey>,
+    pub extras: Option<&'a crate::Extras>,
 }
 
 pub async fn save(
@@ -53,6 +56,7 @@ pub async fn save(
         ffmpeg,
         tags,
         key,
+        extras,
     } = options;
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
@@ -107,6 +111,14 @@ pub async fn save(
     }
     command.arg(&ready);
     run(command, cancel).await?;
+    {
+        let extras = extras.cloned().unwrap_or_default();
+        let tags = tags.clone();
+        let ready = ready.clone();
+        tokio::task::spawn_blocking(move || crate::extras::embed(&ready, &extras, &tags))
+            .await
+            .map_err(|_| Error::Tag)??;
+    }
     progress(Progress::Verifying);
     let mut verify = Command::new(ffmpeg);
     verify
@@ -125,6 +137,11 @@ pub async fn save(
     run(verify, cancel).await?;
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
+    }
+    // Sidecars are valid independent artifacts and never replace existing files.
+    // Publish them before audio so a failed sidecar write cannot report a complete bundle.
+    if let Some(extras) = extras {
+        crate::extras::sidecars(extras, temp.path(), output).await?;
     }
     let result = tokio::fs::hard_link(&ready, output).await;
     match result {

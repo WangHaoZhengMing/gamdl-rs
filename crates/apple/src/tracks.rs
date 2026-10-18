@@ -13,6 +13,8 @@ pub struct Track {
     pub track_number: Option<u32>,
     pub disc_number: Option<u32>,
     pub release_date: Option<String>,
+    pub storefront: String,
+    pub artwork_url: Option<String>,
 }
 #[derive(Deserialize)]
 struct Page {
@@ -38,6 +40,12 @@ struct Attributes {
     track_number: Option<u32>,
     disc_number: Option<u32>,
     release_date: Option<String>,
+    artwork: Option<Artwork>,
+}
+
+#[derive(Deserialize)]
+struct Artwork {
+    url: String,
 }
 
 fn next_url(path: &str) -> Result<Url, Error> {
@@ -104,6 +112,8 @@ pub async fn tracks(
                 track_number: attributes.track_number,
                 disc_number: attributes.disc_number,
                 release_date: attributes.release_date,
+                storefront: resource.storefront.clone(),
+                artwork_url: attributes.artwork.map(|artwork| artwork.url),
             });
         }
         let Some(next) = page.next else {

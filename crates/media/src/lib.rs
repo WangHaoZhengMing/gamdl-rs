@@ -1,5 +1,9 @@
 //! HLS download, AES-128/CENC decryption and verified M4A publishing.
 mod drm;
+mod extras;
+mod lyrics;
+pub use extras::{Cover, Extras, fetch_cover};
+pub use lyrics::{Lyrics, LyricsFormat, LyricsKind, parse_lyrics};
 mod hls;
 mod mux;
 mod transfer;
@@ -17,6 +21,12 @@ pub struct ToolVersion {
 }
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("invalid lyrics: {0}")]
+    Lyrics(&'static str),
+    #[error("unsupported or invalid artwork")]
+    Artwork,
+    #[error("could not embed artwork or lyrics")]
+    Tag,
     #[error("local media I/O failed: {0}")]
     Io(#[from] std::io::Error),
     #[error("media request failed: {0}")]

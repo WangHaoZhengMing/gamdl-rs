@@ -206,7 +206,9 @@ fn build_plan(base: &Url, playlist: m3u8_rs::MediaPlaylist) -> Result<Plan, Erro
                     protection = Protection::Aes128;
                     aes = true;
                 }
-                KeyMethod::Other(method) if method == "SAMPLE-AES-CTR" => {
+                KeyMethod::Other(method)
+                    if matches!(method.as_str(), "SAMPLE-AES-CTR" | "ISO-23001-7") =>
+                {
                     let pssh = key
                         .uri
                         .clone()
@@ -281,6 +283,17 @@ mod tests {
         assert_eq!(plan.pieces.len(), 3);
         assert_eq!(plan.pieces[2].range, Some((16, 31)));
         assert!(plan.pieces.iter().all(|piece| piece.aes.is_some()));
+    }
+    #[test]
+    fn accepts_apple_legacy_cenc_method() {
+        let pssh = "data:text/plain;base64,AgICAgICAgICAgICAgICAg==";
+        let plan = parse(&format!(
+            "#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXT-X-KEY:METHOD=ISO-23001-7,URI=\"{pssh}\"\n#EXT-X-MAP:URI=\"init\"\n#EXTINF:1,\nsegment\n#EXT-X-ENDLIST\n"
+        ))
+        .unwrap();
+        assert!(matches!(plan.protection, Protection::Cenc { pssh: actual } if actual == pssh));
+        assert_eq!(plan.pieces.len(), 2);
+        assert!(plan.pieces.iter().all(|piece| piece.aes.is_none()));
     }
     #[test]
     fn rejects_live_and_invalid_implicit_ranges() {

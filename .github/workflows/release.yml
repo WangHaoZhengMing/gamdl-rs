@@ -1,0 +1,158 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing version tag to release (for example, v1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+
+jobs:
+  prepare:
+    name: Validate release tag
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      commit: ${{ steps.release.outputs.commit }}
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Match tag to workspace version
+        id: release
+        shell: bash
+        run: |
+          python scripts/package-release.py --validate-tag "$RELEASE_TAG"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      BUILD_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+          targets: ${{ matrix.target }}
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo bash scripts/install-linux-deps.sh
+      - name: Test shared download pipeline
+        if: runner.os == 'Linux'
+        run: cargo test --locked -p apple -p media -p app -p cli
+      - name: Test desktop logic
+        run: cargo test --locked -p desktop --bin desktop --target "$BUILD_TARGET"
+      - name: Build desktop and CLI
+        run: cargo build --locked --release -p desktop -p cli --target "$BUILD_TARGET"
+      - name: Smoke test CLI
+        run: |
+          executable="target/$BUILD_TARGET/release/cli"
+          if [[ "$RUNNER_OS" == 'Windows' ]]; then executable+='.exe'; fi
+          "$executable" --version
+          "$executable" parse 'https://music.apple.com/us/song/123456789'
+      - name: Package release
+        run: >-
+          python scripts/package-release.py
+          --tag "$RELEASE_TAG"
+          --target "$BUILD_TARGET"
+          --binary-dir "target/$BUILD_TARGET/release"
+          --output-dir dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Verify packages and publish
+        shell: bash
+        run: |
+          cd dist
+          shopt -s nullglob
+          checksums=(*.sha256)
+          if [[ ${#checksums[@]} -ne 4 ]]; then
+            echo 'Expected four release packages and their checksums.' >&2
+            exit 1
+          fi
+          for checksum in "${checksums[@]}"; do sha256sum --check "$checksum"; done
+          cat "${checksums[@]}" > SHA256SUMS.txt
+          assets=(*.zip *.tar.gz SHA256SUMS.txt)
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          else
+            flags=()
+            if [[ "${RELEASE_TAG%%+*}" == *-* ]]; then flags+=(--prerelease); fi
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --verify-tag --notes-file "$GITHUB_WORKSPACE/CHANGELOG.md" \
+              --title "$RELEASE_TAG" "${flags[@]}"
+          fi

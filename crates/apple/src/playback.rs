@@ -9,6 +9,7 @@ pub struct Playback {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Response {
+    failure_type: Option<String>,
     #[serde(default)]
     song_list: Vec<Song>,
 }
@@ -34,6 +35,12 @@ pub async fn playback(session: &Session, id: &str, language: &str) -> Result<Pla
         .error_for_status()?
         .json()
         .await?;
+    if let Some(code) = response.failure_type {
+        if code == "3076" {
+            return Err(Error::TrackUnavailable);
+        }
+        return Err(Error::PlaybackRejected { code });
+    }
     let asset = response
         .song_list
         .into_iter()

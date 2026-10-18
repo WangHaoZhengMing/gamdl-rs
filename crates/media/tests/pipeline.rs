@@ -165,6 +165,7 @@ async fn aes_hls_retries_decrypts_tags_and_never_overwrites() {
         ffmpeg: Path::new("ffmpeg"),
         tags: &tags,
         key: None,
+        extras: None,
     };
     assert!(matches!(
         media::save(&client, &plan, options(), &cancel, |_| {})
@@ -225,7 +226,8 @@ async fn cenc_key_decrypts_and_wrong_key_cannot_publish_corrupt_audio() {
                 output: &output,
                 ffmpeg: Path::new("ffmpeg"),
                 tags: &tags,
-                key: Some(&key)
+                key: Some(&key),
+                extras: None,
             },
             &cancel,
             |_| {}
@@ -243,7 +245,8 @@ async fn cenc_key_decrypts_and_wrong_key_cannot_publish_corrupt_audio() {
                 output: &bad,
                 ffmpeg: Path::new("ffmpeg"),
                 tags: &tags,
-                key: Some(&wrong)
+                key: Some(&wrong),
+                extras: None,
             },
             &cancel,
             |_| {}
@@ -289,6 +292,7 @@ async fn cancellation_cleans_partial_output() {
             ffmpeg: Path::new("ffmpeg"),
             tags: &tags,
             key: None,
+            extras: None,
         },
         &cancel,
         |progress| {
@@ -331,4 +335,100 @@ async fn byte_ranges_reassemble_the_original_payload() {
         .await
         .unwrap();
     assert_eq!(tokio::fs::read(path).await.unwrap(), b"abcdefgh");
+}
+
+#[tokio::test]
+async fn lyrics_and_cover_embed_without_sidecars_unless_requested() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source.ts");
+    fixture(&source, false).await;
+    let image = tokio::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=blue:s=32x32",
+            "-frames:v",
+            "1",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "png",
+            "-",
+        ])
+        .output()
+        .await
+        .unwrap();
+    assert!(image.status.success());
+    let cover = media::Cover::from_bytes(image.stdout).unwrap();
+    let ttml =
+        "<tt><body><p begin=\"1s\"><span begin=\"1s\" end=\"2s\">Test</span></p></body></tt>";
+    let lyrics = media::parse_lyrics(ttml).unwrap();
+    let server = Server::new(
+        HashMap::from([
+            ("/list".into(), playlist("")),
+            ("/segment".into(), tokio::fs::read(source).await.unwrap()),
+        ]),
+        false,
+    )
+    .await;
+    let client = media::client().unwrap();
+    let cancel = CancellationToken::new();
+    let plan = media::prepare(&client, server.base.join("list").unwrap(), &cancel)
+        .await
+        .unwrap();
+    for standalone in [false, true] {
+        let output = temp
+            .path()
+            .join(if standalone { "files" } else { "embedded" })
+            .join("song.m4a");
+        let extras = media::Extras {
+            lyrics: Some(lyrics.clone()),
+            cover: Some(cover.clone()),
+            save_lyrics: standalone,
+            save_cover: standalone,
+            ..Default::default()
+        };
+        let tags = Tags::default();
+        media::save(
+            &client,
+            &plan,
+            SaveOptions {
+                output: &output,
+                ffmpeg: Path::new("ffmpeg"),
+                tags: &tags,
+                key: None,
+                extras: Some(&extras),
+            },
+            &cancel,
+            |_| {},
+        )
+        .await
+        .unwrap();
+        let tag = mp4ameta::Tag::read_from_path(&output).unwrap();
+        assert_eq!(tag.lyrics(), Some(lyrics.embedded()));
+        assert_eq!(tag.artwork().unwrap().data, cover.bytes.as_slice());
+        assert_eq!(
+            tag.strings_of(&mp4ameta::FreeformIdent::new_static(
+                "com.gamdl-rs",
+                "LYRICS_TTML"
+            ))
+            .next(),
+            Some(ttml)
+        );
+        assert_eq!(output.with_extension("png").exists(), standalone);
+        assert_eq!(output.with_extension("lrc").exists(), standalone);
+        if standalone {
+            assert_eq!(
+                tokio::fs::read_to_string(output.with_extension("lrc"))
+                    .await
+                    .unwrap(),
+                lyrics.embedded()
+            );
+        }
+    }
 }

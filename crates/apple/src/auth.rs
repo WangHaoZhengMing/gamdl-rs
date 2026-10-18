@@ -12,6 +12,19 @@ pub struct Session {
     pub(crate) client: Client,
 }
 
+/// An opaque browser credential. Deliberately has no Debug or Serialize impl.
+#[derive(Clone)]
+pub struct UserToken(String);
+
+impl UserToken {
+    pub fn new(value: String) -> Result<Self, Error> {
+        if value.is_empty() || value.bytes().any(|b| b <= 32 || b >= 127 || b == b';') {
+            return Err(Error::InvalidCookies("invalid token"));
+        }
+        Ok(Self(value))
+    }
+}
+
 #[derive(Deserialize)]
 struct AccountResponse {
     meta: AccountMeta,
@@ -52,8 +65,9 @@ pub(crate) fn user_token(cookies: &str, now: u64) -> Result<String, Error> {
             continue;
         }
         let expires: u64 = fields[4]
-            .parse()
-            .map_err(|_| Error::InvalidCookies("invalid expiry"))?;
+            .parse::<f64>()
+            .map_err(|_| Error::InvalidCookies("invalid expiry"))?
+            .trunc() as u64;
         if expires != 0 && expires <= now {
             return Err(Error::ExpiredCookies);
         }
@@ -78,6 +92,10 @@ pub async fn check_session(cookies: &str) -> Result<(Session, Account), Error> {
         .unwrap_or_default()
         .as_secs();
     let user = user_token(cookies, now)?;
+    check_user_token(&UserToken::new(user)?).await
+}
+
+pub async fn check_user_token(user: &UserToken) -> Result<(Session, Account), Error> {
     let public_client = Client::builder().timeout(Duration::from_secs(30)).build()?;
     let home = public_client
         .get("https://music.apple.com")
@@ -101,7 +119,7 @@ pub async fn check_session(cookies: &str) -> Result<(Session, Account), Error> {
     let mut headers = HeaderMap::new();
     for (name, value) in [
         (AUTHORIZATION, format!("Bearer {developer}")),
-        (COOKIE, format!("media-user-token={user}")),
+        (COOKIE, format!("media-user-token={}", user.0)),
     ] {
         let mut header = HeaderValue::from_str(&value)
             .map_err(|_| Error::InvalidCookies("invalid authentication header"))?;
@@ -111,6 +129,7 @@ pub async fn check_session(cookies: &str) -> Result<(Session, Account), Error> {
     headers.insert(ORIGIN, HeaderValue::from_static("https://music.apple.com"));
     // Never follow redirects with credential-bearing headers.
     let client = Client::builder()
+        .user_agent(concat!("gamdl-rs/", env!("CARGO_PKG_VERSION")))
         .default_headers(headers)
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(30))

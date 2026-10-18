@@ -1,4 +1,5 @@
 /target/
+/dist/
 /cookies.txt
 *.cookies.txt
 .env
@@ -9,3 +10,4 @@
 /Apple Music/
 
 !crates/media/assets/default.wvd
+experiments/rust-media-probe/
