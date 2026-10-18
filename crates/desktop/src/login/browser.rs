@@ -100,7 +100,7 @@ fn create_window(
         };
         #[cfg(target_os = "macos")]
         let builder = {
-            use wry::WebViewBuilderExtMacOS;
+            use wry::WebViewBuilderExtMacos;
             builder.with_webview_configuration(opener.opener.target_configuration)
         };
         #[cfg(target_os = "linux")]
